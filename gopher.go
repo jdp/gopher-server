@@ -56,39 +56,53 @@ type gophermapEntry struct {
 	Port int
 }
 
-func (entry *gophermapEntry) ToString() string {
+func (entry *gophermapEntry) String() string {
 	return fmt.Sprintf("%c%s\t%s\t%s\t%d", entry.Type, entry.Data, entry.Path, entry.Host, entry.Port)
 }
 
-func (s *Server) ParseGophermapLine(ctx *Context, line string) (entry *gophermapEntry) {
-	entry = &gophermapEntry{Type: line[0]}
+// Returns a vector of gophermap entries
+// The strategy here is to build a vector of entries, one line can be more than one entry
+// A line can be one of two formats:
+//    Xglob
+// OR:
+//    Xname<tab>[path[<tab>hostname[<tab>port]]]
+// Where X is the Gopher item type and <tab> is the literal \t
+// Any field not specified is automatically provided
+func (s *Server) ParseGophermapLine(ctx *Context, line string) (entries vector.Vector) {
 	parts := strings.Split(line[1:], "\t", 4)
-	if len(parts) > 0 {
-		entry.Data = parts[0]
+	fullpath := s.Cwd+ctx.Request+"/"+parts[0]
+	var matches []string
+	if len(parts) == 2 && strings.Trim(parts[1], " \t\r\n") == "" {
+		matches = path.Glob(fullpath)
 	} else {
-		entry.Data = ""
+		matches = []string{fullpath}
 	}
-	if len(parts) > 1 {
-		if (strings.HasPrefix(parts[1], "/")) {
-			entry.Path = parts[1]
+	for _, match := range matches {
+		entry := &gophermapEntry{Type: line[0]}
+		entry.Data = path.Base(match)
+		if strings.Trim(parts[1], " \t\r\n") == "" {
+			entry.Path = ctx.Request+"/"+path.Base(match)
 		} else {
-			entry.Path = ctx.Request+"/"+parts[1]
+			if (strings.HasPrefix(parts[1], "/")) {
+				entry.Path = parts[1]
+			} else {
+				entry.Path = ctx.Request+"/"+parts[1]
+			}
 		}
-	} else {
-		entry.Path = ctx.Request+"/"+parts[0]
+		if len(parts) > 2 {
+			entry.Host = parts[2]
+		} else {
+			entry.Host = s.Hostname
+		}
+		if len(parts) > 3 {
+			port, _ := strconv.Atoi(parts[3])
+			entry.Port = port
+		} else {
+			entry.Port = s.Port
+		}
+		entries.Push(entry)
 	}
-	if len(parts) > 2 {
-		entry.Host = parts[2]
-	} else {
-		entry.Host = s.Hostname
-	}
-	if len(parts) > 3 {
-		port, _ := strconv.Atoi(parts[3])
-		entry.Port = port
-	} else {
-		entry.Port = s.Port
-	}
-	return entry
+	return
 }
 
 func (s *Server) Gophermap(ctx *Context, gmap *os.File, dir *os.File) (ok bool, err os.Error) {
@@ -100,7 +114,10 @@ func (s *Server) Gophermap(ctx *Context, gmap *os.File, dir *os.File) (ok bool, 
 			if strings.Index(entry, "\t") == -1 {
 				ctx.Write(s.InfoLine(entry))
 			} else {
-				ctx.Write(s.ParseGophermapLine(ctx, entry).ToString())
+				entries := s.ParseGophermapLine(ctx, entry)
+				for e := 0; e < entries.Len(); e++ {
+					ctx.Write(entries[e].(*gophermapEntry).String())
+				}
 			}
 		} else {
 			if err != os.EOF {

@@ -1,3 +1,4 @@
 A very simple Gopher server that will only serve descendant files and folders
-in its current working directory. Basic support for Gophermap files is
-included, but without globbing.
+in its current working directory.
+
+Basic gophermap file support is included.
